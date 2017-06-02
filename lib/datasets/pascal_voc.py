@@ -57,6 +57,12 @@ class pascal_voc(imdb):
     assert os.path.exists(self._data_path), \
       'Path does not exist: {}'.format(self._data_path)
 
+  def _safe_class_to_ind(self, cls):
+    try:
+      return int(cls)
+    except ValueError:
+      return self._class_to_ind_map[cls]
+
   def image_path_at(self, i):
     """
     Return the absolute path to image i in the image sequence.
@@ -168,7 +174,7 @@ class pascal_voc(imdb):
       y1 = float(bbox.find('ymin').text) - 1
       x2 = float(bbox.find('xmax').text) - 1
       y2 = float(bbox.find('ymax').text) - 1
-      cls = self._class_to_ind[obj.find('name').text.lower().strip()]
+      cls = self._safe_class_to_ind(obj.find('name').text.lower().strip())
       boxes[ix, :] = [x1, y1, x2, y2]
       gt_classes[ix] = cls
       overlaps[ix, cls] = 1.0
