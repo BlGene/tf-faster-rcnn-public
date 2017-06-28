@@ -23,6 +23,7 @@ class RoIDataLayer(object):
 
   def __init__(self, roidb, num_classes, random=False):
     """Set the roidb to be used by this layer during training."""
+    assert(len(roidb) > 0), 'roidb must contain entries'
     self._roidb = roidb
     self._num_classes = num_classes
     # Also set a random flag

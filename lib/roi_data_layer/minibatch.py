@@ -19,6 +19,7 @@ from utils.blob import prep_im_for_blob, im_list_to_blob
 def get_minibatch(roidb, num_classes):
   """Given a roidb, construct a minibatch sampled from it."""
   num_images = len(roidb)
+  assert( num_images > 0), 'num_images ({}) must be >0'.format(num_images)
   # Sample random scales to use for each image in this batch
   random_scale_inds = npr.randint(0, high=len(cfg.TRAIN.SCALES),
                   size=num_images)
