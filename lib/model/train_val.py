@@ -20,6 +20,7 @@ import os
 import sys
 import glob
 import time
+from collections import defaultdict
 
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
@@ -40,6 +41,10 @@ class SolverWrapper(object):
     self.tbvaldir = tbdir + '_val'
     if not os.path.exists(self.tbvaldir):
       os.makedirs(self.tbvaldir)
+    self.tbevaldir = tbdir + '_eval'
+    if not os.path.exists(self.tbevaldir):
+      os.makedirs(self.tbevaldir)
+
     self.pretrained_model = pretrained_model
 
   def snapshot(self, sess, iter):
@@ -90,6 +95,32 @@ class SolverWrapper(object):
         print("It's likely that your checkpoint file has been compressed "
               "with SNAPPY.")
 
+  # Do one evaluation of the first num_entries of the validation dataset
+  # to allow for early stopping in the cases where dataset sizes are small
+  # This is the cheap and cheerfull way of doing this, the graph centric way
+  # of doing this would be using tf.contrib.metrics
+  # this function is designed to be called from train_model during training
+  def get_eval_summary(self, sess, num_entries=1e3):
+    val_subset = self.valroidb[:num_entries]
+    data_layer_val = RoIDataLayer(self.valroidb, self.imdb.num_classes, random=False)
+    # parse and accumulate over epoch
+    summaries = defaultdict(list)
+    for _ in range(len(val_subset)):
+      blobs_val = data_layer_val.forward()
+      summary_val = self.net.get_summary(sess, blobs_val)
+      summary_proto = tf.Summary()
+      summary_proto.ParseFromString(summary_val)
+      for val in summary_proto.value:
+        # Assuming all summaries are scalars.
+        summaries[val.tag].append(val.simple_value)
+    # create a new epoch mean summary
+    epoch_summary = tf.Summary()
+    epoch_summary.CopyFrom(summary_proto)
+    for val in epoch_summary.value:
+        val.simple_value = np.nanmean(summaries[val.tag])
+    return epoch_summary.SerializeToString()
+
+
   def train_model(self, sess, max_iters):
     # Build data layers for both training and validation set
     self.data_layer = RoIDataLayer(self.roidb, self.imdb.num_classes)
@@ -132,6 +163,7 @@ class SolverWrapper(object):
       # Write the train and validation information to tensorboard
       self.writer = tf.summary.FileWriter(self.tbdir, sess.graph)
       self.valwriter = tf.summary.FileWriter(self.tbvaldir)
+      self.evalwriter = tf.summary.FileWriter(self.tbevaldir)
 
     # Find previous snapshots if there is any to restore from
     sfiles = os.path.join(self.output_dir, cfg.TRAIN.SNAPSHOT_PREFIX + '_iter_*.ckpt.meta')
@@ -242,6 +274,10 @@ class SolverWrapper(object):
               (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
         print('speed: {:.3f}s / iter'.format(timer.average_time))
 
+      if iter % 1000 == 0:
+        summary_eval = self.get_summary_eval(self, sess, 1000)
+        self.valwriter.add_summary(summary_eval, float(iter))
+
       if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
         last_snapshot_iter = iter
         snapshot_path, np_path = self.snapshot(sess, iter)
@@ -278,6 +314,7 @@ class SolverWrapper(object):
 
     self.writer.close()
     self.valwriter.close()
+    self.evalwriter.close()
 
 
 def get_training_roidb(imdb):
