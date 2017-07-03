@@ -20,6 +20,7 @@ import os
 import sys
 import glob
 import time
+from collections import defaultdict
 
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
@@ -89,6 +90,32 @@ class SolverWrapper(object):
       if "corrupted compressed block contents" in str(e):
         print("It's likely that your checkpoint file has been compressed "
               "with SNAPPY.")
+
+  # Do one evaluation of the first num_entries of the validation dataset
+  # to allow for early stopping in the cases where dataset sizes are small
+  # This is the cheap and cheerfull way of doing this, the graph centric way
+  # of doing this would be using tf.contrib.metrics
+  # this function is designed to be called from train_model during training
+  def val_model(self, sess, iter_n, num_entries=2):
+    val_subset = self.valroidb[:num_entries]
+    data_layer_val = RoIDataLayer(self.valroidb, self.imdb.num_classes, random=False)
+    # parse and accumulate over epoch
+    summaries = defaultdict(list)
+    for _ in range(len(val_subset)):
+      blobs_val = data_layer_val.forward()
+      summary_val = self.net.get_summary(sess, blobs_val)
+      summary_proto = tf.Summary()
+      summary_proto.ParseFromString(summary_val)
+      for val in summary_proto.value:
+        # Assuming all summaries are scalars.
+        summaries[val.tag].append(val.simple_value)
+    # create a new epoch mean summary
+    epoch_summary = tf.Summary()
+    epoch_summary.CopyFrom(summary_proto)
+    for val in epoch_summary.value:
+        val.simple_value = np.nanmean(summaries[val.tag])
+    self.valwriter.add_summary(epoch_summary.SerializeToString(),
+                               float(iter_n))
 
   def train_model(self, sess, max_iters):
     # Build data layers for both training and validation set
@@ -208,6 +235,10 @@ class SolverWrapper(object):
     iter = last_snapshot_iter + 1
     last_summary_time = time.time()
     while iter < max_iters + 1:
+      # Do a comprehensive validation run
+      if iter % 1000 == 0:
+          self.val_model(sess, iter)
+
       # Learning rate
       if iter == cfg.TRAIN.STEPSIZE + 1:
         # Add snapshot here before reducing the learning rate
