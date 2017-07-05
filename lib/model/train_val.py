@@ -41,6 +41,10 @@ class SolverWrapper(object):
     self.tbvaldir = tbdir + '_val'
     if not os.path.exists(self.tbvaldir):
       os.makedirs(self.tbvaldir)
+    self.tbevaldir = tbdir + '_eval'
+    if not os.path.exists(self.tbevaldir):
+      os.makedirs(self.tbevaldir)
+
     self.pretrained_model = pretrained_model
 
   def snapshot(self, sess, iter):
@@ -96,7 +100,7 @@ class SolverWrapper(object):
   # This is the cheap and cheerfull way of doing this, the graph centric way
   # of doing this would be using tf.contrib.metrics
   # this function is designed to be called from train_model during training
-  def val_model(self, sess, iter_n, num_entries=2):
+  def val_model(self, sess, iter_n, num_entries=1e3, writer=self.valwriter):
     val_subset = self.valroidb[:num_entries]
     data_layer_val = RoIDataLayer(self.valroidb, self.imdb.num_classes, random=False)
     # parse and accumulate over epoch
@@ -114,7 +118,7 @@ class SolverWrapper(object):
     epoch_summary.CopyFrom(summary_proto)
     for val in epoch_summary.value:
         val.simple_value = np.nanmean(summaries[val.tag])
-    self.valwriter.add_summary(epoch_summary.SerializeToString(),
+    writer.add_summary(epoch_summary.SerializeToString(),
                                float(iter_n))
 
   def train_model(self, sess, max_iters):
@@ -159,6 +163,7 @@ class SolverWrapper(object):
       # Write the train and validation information to tensorboard
       self.writer = tf.summary.FileWriter(self.tbdir, sess.graph)
       self.valwriter = tf.summary.FileWriter(self.tbvaldir)
+      self.evalwriter = tf.summary.FileWriter(self.tbevaldir)
 
     # Find previous snapshots if there is any to restore from
     sfiles = os.path.join(self.output_dir, cfg.TRAIN.SNAPSHOT_PREFIX + '_iter_*.ckpt.meta')
@@ -235,10 +240,6 @@ class SolverWrapper(object):
     iter = last_snapshot_iter + 1
     last_summary_time = time.time()
     while iter < max_iters + 1:
-      # Do a comprehensive validation run
-      if iter % 1000 == 0:
-          self.val_model(sess, iter)
-
       # Learning rate
       if iter == cfg.TRAIN.STEPSIZE + 1:
         # Add snapshot here before reducing the learning rate
@@ -272,6 +273,9 @@ class SolverWrapper(object):
               '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> lr: %f' % \
               (iter, max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, lr.eval()))
         print('speed: {:.3f}s / iter'.format(timer.average_time))
+
+      if iter % 1000 == 0:
+        self.val_model(self, sess, iter, 1000, self.evalwriter)
 
       if iter % cfg.TRAIN.SNAPSHOT_ITERS == 0:
         last_snapshot_iter = iter
@@ -309,6 +313,7 @@ class SolverWrapper(object):
 
     self.writer.close()
     self.valwriter.close()
+    self.evalwriter.close()
 
 
 def get_training_roidb(imdb):
